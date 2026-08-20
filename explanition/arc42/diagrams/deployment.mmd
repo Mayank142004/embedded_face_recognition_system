@@ -1,0 +1,20 @@
+graph TD
+    subgraph Host OS / Developer Machine
+        direction TB
+        DockerDaemon["Docker Daemon"]
+        
+        subgraph Container["face_recognition_app Container"]
+            App["Python 3.11 Runtime\n(main.py)"]
+        end
+        
+        subgraph Local File System
+            VidIn["test_datas/\n(testing_video.mp4)"]
+            VidOut["result_datas/\n(Result MP4)"]
+            CSV["marked_attendance/\n(CSV + JPG)"]
+        end
+        
+        DockerDaemon --> Container
+        VidIn -.->|Volume Mount Read| App
+        App -.->|Volume Mount Write| VidOut
+        App -.->|Volume Mount Write| CSV
+    end

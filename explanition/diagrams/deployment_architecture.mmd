@@ -1,0 +1,9 @@
+graph TD
+    Host[Host Machine] -->|docker build| Image[Docker Image: face-recognition]
+    Image --> |FROM| Base[python:3.11-bookworm]
+    Image --> |apt-get install| Deps[libgl1, libglib2.0-0, etc.]
+    Image --> |pip install| PyDeps[requirement_clean.txt]
+    Image --> |COPY| Code[Application Code]
+    Host -->|docker run -v| Container[Running Container]
+    Container -->|Reads| Config[test_datas/testing_video.mp4]
+    Container -->|Writes| Volumes[marked_attendance/]

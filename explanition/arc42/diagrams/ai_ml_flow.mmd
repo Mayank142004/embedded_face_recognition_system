@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant YOLO as YOLOv8 (yolov8n-face.pt)
+    participant Pre as Preprocessing
+    participant FN as FaceNet (keras-facenet)
+    participant SVM as SVC (new_classifier_Jun27_759.pkl)
+
+    YOLO->>Pre: Bounding box coordinates (x1, y1, x2, y2)
+    Pre->>Pre: face_img = frame[y1:y2, x1:x2]
+    Pre->>Pre: cv2.resize(face_img, (160, 160))
+    Pre->>FN: Pass 160x160 RGB array
+    
+    FN->>FN: embedder.embeddings()
+    FN->>SVM: Pass 1x512 embedding vector
+    
+    SVM->>SVM: model.predict_proba(embedding)
+    SVM->>SVM: model.predict(embedding)
+    
+    SVM-->>YOLO: Returns (Name, Probability) back to application loop

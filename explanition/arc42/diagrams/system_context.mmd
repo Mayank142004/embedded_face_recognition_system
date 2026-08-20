@@ -1,0 +1,4 @@
+graph TD
+    User["Employee"] -->|Walks into view| Camera["Video Source\n(testing_video.mp4)"]
+    Camera -->|Raw video frames| System["Face Recognition System\n(main.py)"]
+    System -->|Writes CSV logs & Image| Admin["Administrator"]

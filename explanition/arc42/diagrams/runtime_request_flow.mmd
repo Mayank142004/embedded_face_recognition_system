@@ -1,0 +1,28 @@
+sequenceDiagram
+    participant SV as sv.process_video
+    participant Main as callback(frame)
+    participant YOLO as YOLOv8
+    participant Track as ByteTrack
+    participant ML as predict_face()
+    participant Disk as File System
+
+    SV->>Main: Call with current frame
+    Main->>YOLO: Infer bounding boxes
+    YOLO-->>Main: Detections
+    Main->>Track: update_with_detections()
+    Track-->>Main: Tracker IDs assigned
+    Main->>Main: Draw Attendance Line
+    
+    alt y1 <= line_y <= y2
+        Main->>Main: Crop face from frame
+        Main->>ML: Pass face crop
+        ML-->>Main: Name, Probability
+        alt Probability >= 0.87 and Name not in saved_names
+            Main->>Disk: cv2.imwrite(face_image)
+            Main->>Disk: csv.writer.writerow()
+            Main->>Main: Add Name to saved_names
+        end
+    end
+    
+    Main->>Main: Annotate frame (boxes, labels)
+    Main-->>SV: Return annotated frame

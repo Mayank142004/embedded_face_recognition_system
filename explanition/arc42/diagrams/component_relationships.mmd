@@ -1,0 +1,17 @@
+graph TD
+    A[main.py] -->|Imports| B(supervision)
+    A -->|Imports| C(ultralytics)
+    A -->|Imports| D(cv2)
+    A -->|Imports| E(csv)
+    A -->|Imports| F(facent_svm_rec_passing.py)
+    
+    F -->|Imports| G(keras_facenet)
+    F -->|Imports| H(sklearn.svm)
+    F -->|Imports| I(pickle)
+    
+    J[training.py] -->|Imports| G
+    J -->|Imports| H
+    J -->|Imports| K(mtcnn)
+    
+    J -.->|Trains & Saves| L[(facenet_models/new_classifier.pkl)]
+    F -.->|Loads & Predicts| L

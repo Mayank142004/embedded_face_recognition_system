@@ -1,0 +1,9 @@
+graph TD
+    User[User / Video Source] -->|Frame| main[main.py]
+    main -->|Detects Faces| YOLO[YOLOv8 Model]
+    main -->|Tracks Faces| ByteTrack[supervision.ByteTrack]
+    main -->|Crops Face| facenet_service[facenet_files/facent_svm_rec_passing.py]
+    facenet_service -->|Embeds| FaceNet[keras-facenet]
+    facenet_service -->|Predicts| SVM[SVM Classifier]
+    SVM -->|Name, Probability| main
+    main -->|Saves Log & Image| FileSystem[marked_attendance/]

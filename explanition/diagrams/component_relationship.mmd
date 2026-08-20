@@ -1,0 +1,6 @@
+graph LR
+    main(main.py) <--> supervision(Supervision Library)
+    main <--> yolo(YOLO Models)
+    main <--> facenet_service(facent_svm_rec_passing)
+    facenet_service <--> facenet_models(SVM / Pickle)
+    main --> storage(marked_attendance)

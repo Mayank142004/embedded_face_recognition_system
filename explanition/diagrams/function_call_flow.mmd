@@ -1,0 +1,11 @@
+graph TD
+    A[main.py execution] --> B[sv.process_video]
+    B --> C[callback]
+    C --> D[model]
+    C --> E[tracker.update_with_detections]
+    C --> F[predict_face]
+    F --> G[get_embedding]
+    G --> H[embedder.embeddings]
+    F --> I[model.predict & predict_proba]
+    C --> J[cv.imwrite]
+    C --> K[csv.writer.writerow]

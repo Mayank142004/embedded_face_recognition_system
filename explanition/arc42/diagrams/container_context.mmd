@@ -1,0 +1,14 @@
+graph TD
+    subgraph Docker Container
+        System["Python Application\n(main.py)"]
+        Yolo["YOLOv8 Model"]
+        FaceNet["FaceNet + SVM Model"]
+        
+        System -->|Infers| Yolo
+        System -->|Infers| FaceNet
+    end
+    
+    VideoFile["Input Video\n(Volume: ./test_datas)"] -->|cv2.VideoCapture| System
+    System -->|Writes logs| CSV["CSV Logs\n(Volume: ./marked_attendance)"]
+    System -->|Writes images| Images["Face Crops\n(Volume: ./marked_attendance)"]
+    System -->|Writes video| OutVideo["Result Video\n(Volume: ./result_datas)"]

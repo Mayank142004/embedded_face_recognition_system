@@ -1,0 +1,9 @@
+graph TD
+    Input[Input Video Frame] --> Detect[YOLOv8 Detection]
+    Detect --> Crop[Crop Face Region]
+    Crop --> Preprocess[OpenCV: Resize to 160x160 RGB]
+    Preprocess --> Extract[keras-facenet: Feature Extraction]
+    Extract --> Vector[512D Embedding Vector]
+    Vector --> Classify[SVM Classification]
+    Classify --> Decode[Label Encoder: inverse_transform]
+    Decode --> Output[Output: Name, Probability]

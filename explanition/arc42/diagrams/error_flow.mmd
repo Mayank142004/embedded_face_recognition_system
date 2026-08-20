@@ -1,0 +1,22 @@
+graph TD
+    A[Start Frame Processing] --> B{YOLO Detects Face?}
+    B -- Yes --> C[Annotate Frame]
+    
+    C --> D{Exception during annotation?}
+    D -- Yes --> E[Print Exception to Console]
+    D -- No --> F[Continue Processing]
+    E --> F
+    
+    F --> G{Face crosses line?}
+    G -- Yes --> H[predict_face]
+    
+    H --> I{Exception in prediction?}
+    I -- Yes --> J[Application crashes]
+    I -- No --> K[Continue to CSV save]
+    
+    K --> L{Exception in CSV save?}
+    L -- Yes --> M[Data loss, app might crash]
+    L -- No --> N[Frame processing complete]
+    
+    classDef error fill:#f9f,stroke:#333,stroke-width:2px;
+    class J,M error;

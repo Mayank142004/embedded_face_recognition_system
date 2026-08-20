@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant Main as main.py
+    participant ML as Face Recognition Service
+    participant Mem as saved_names (Memory)
+    participant CSV as Attendance Log
+
+    Main->>ML: Extract embedding & Predict Identity
+    ML-->>Main: Returns Name="akshay", Probability=0.92
+    
+    Main->>Main: Check if Probability >= 0.87
+    
+    alt Is Valid (>0.87)
+        Main->>Mem: Check if "akshay" in saved_names
+        alt Not in memory
+            Main->>CSV: Log Attendance
+            Main->>Mem: Append "akshay"
+        else Already in memory
+            Main->>Main: Skip (Already logged today)
+        end
+    else Invalid (<0.87)
+        Main->>Main: Treat as Unknown/Ignore
+    end

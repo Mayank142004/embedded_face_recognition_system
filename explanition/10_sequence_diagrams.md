@@ -1,0 +1,33 @@
+# 10. Sequence Diagrams
+
+## Main Video Processing Flow
+
+```mermaid
+sequenceDiagram
+    participant SV as Supervision Engine
+    participant Main as main.py (callback)
+    participant YOLO as YOLOv8
+    participant Track as ByteTrack
+    participant Recog as predict_face()
+    participant FS as File System (CSV/JPG)
+
+    SV->>Main: Frame (np.ndarray)
+    Main->>YOLO: model(frame)
+    YOLO-->>Main: Detections (bounding boxes)
+    Main->>Track: update_with_detections()
+    Track-->>Main: Tracked Detections (IDs)
+    
+    loop For each detected face
+        Main->>Main: Crop face based on bounding box
+        Main->>Recog: predict_face(face_crop)
+        Recog-->>Main: Name, Probability
+        
+        opt Face crossed line AND Probability >= 0.87
+            Main->>FS: cv.imwrite(filepath, face)
+            Main->>FS: writer.writerow(Name, UUID, Time, Link)
+        end
+    end
+    
+    Main->>Main: Annotate frame with labels and boxes
+    Main-->>SV: Annotated Frame
+```

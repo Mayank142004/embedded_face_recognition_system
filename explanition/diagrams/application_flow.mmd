@@ -1,0 +1,16 @@
+graph TD
+    Start[python main.py] --> Init[Initialize Models & Trackers]
+    Init --> Read[sv.process_video reads frame]
+    Read --> Callback[Call callback(frame)]
+    Callback --> Detect[YOLO Detects Faces]
+    Detect --> Track[ByteTrack Assigns IDs]
+    Track --> Loop{For each face}
+    Loop --> |Crop & Resize| Extract[FaceNet Embedding]
+    Extract --> Predict[SVM Prediction]
+    Predict --> CheckCondition{Crossed line & Conf >= 87%?}
+    CheckCondition -->|Yes| SaveData[Save JPG & append to CSV]
+    CheckCondition -->|No| Skip[Skip saving]
+    SaveData --> Annotate[Draw Bounding Box & Label]
+    Skip --> Annotate
+    Annotate --> WriteFrame[Save live.png & write to output video]
+    WriteFrame --> Read

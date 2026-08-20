@@ -1,0 +1,17 @@
+balancedFaceCrops/
+facenet_backup/
+20180402_114759/
+backup_files/
+facent_copy/
+models/
+result_datas/
+test_datas/
+svm_models/
+.idea/
+
+*.zip
+
+registered_employees.txt
+marked_attendance/core.py
+marked_attendance/core_updatedAfterPobability.py
+

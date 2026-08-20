@@ -1,0 +1,31 @@
+graph TD
+    subgraph Face Recognition System
+        direction TB
+        Main["main.py (App Logic)"]
+        
+        subgraph Detection Layer
+            YOLO["YOLOv8 (yolov8n-face.pt)"]
+            Tracker["ByteTrack"]
+        end
+        
+        subgraph Recognition Layer
+            predict["predict_face()"]
+            FaceNet["Keras-FaceNet"]
+            SVM["Scikit-Learn SVC"]
+        end
+        
+        subgraph Persistence Layer
+            CSV["CSV Writer"]
+            OS["OS / cv2.imwrite"]
+        end
+        
+        Main -->|Object Detection| YOLO
+        Main -->|Tracking| Tracker
+        Main -->|Condition Met| predict
+        
+        predict -->|Embeds| FaceNet
+        predict -->|Classifies| SVM
+        
+        Main -->|If Prob >= 0.87| CSV
+        Main -->|If Prob >= 0.87| OS
+    end

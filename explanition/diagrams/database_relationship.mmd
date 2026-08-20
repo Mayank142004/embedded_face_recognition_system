@@ -1,0 +1,19 @@
+erDiagram
+    DIRECTORY {
+        string DatePath "marked_attendance/YYYY_MM_DD"
+    }
+    CSV_FILE {
+        string FileName "YYYY_MM_DD_attendance_sheet.csv"
+        string Name
+        string UniqueID
+        string Timestamp
+        string Hyperlink
+    }
+    JPG_FILE {
+        string FileName "Name_Timestamp.jpg"
+        image CroppedFace
+    }
+    
+    DIRECTORY ||--o{ CSV_FILE : contains
+    DIRECTORY ||--o{ JPG_FILE : contains
+    CSV_FILE ||--|| JPG_FILE : links_to

@@ -1,0 +1,16 @@
+sequenceDiagram
+    participant App as main.py
+    participant OS as OS / File System
+    participant CSV as CSV File
+
+    App->>App: current_date = datetime.now().strftime('%Y_%m_%d')
+    App->>OS: os.makedirs('marked_attendance/' + current_date, exist_ok=True)
+    
+    App->>OS: Check if CSV exists
+    alt Does not exist
+        App->>CSV: Create new file & write headers
+    end
+    
+    App->>OS: cv.imwrite(image_path, face_crop)
+    App->>CSV: open(csv_file_path, mode='a')
+    App->>CSV: writer.writerow([Name, UUID, Timestamp, Image_Path])
