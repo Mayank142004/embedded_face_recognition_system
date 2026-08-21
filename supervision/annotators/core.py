@@ -1029,23 +1029,34 @@ class LabelAnnotator:
             )
 
 # -----------------------  ktpy edited  ---------------------------- #
-
-            # print('detection idx >>>>>>>>>>>>>>>>>>> : ',detection_idx)
-            # print('labels >>>>>>>>>>>>>>>>>>> :  ',labels)
-            # print('Highest probability taking using index)
-            highest_probability_value = result_probability[detection_idx]
-            if highest_probability_value >=0.87 and text_from_facenet is not None:
-
-                # print('result_probability >>>>>>>>>>>>>>>>>>> : ',result_probability)
-                # print('text from facenet >>>>>>>>>>>>>>>>>>> : ',text_from_facenet)
-
-                try:
-                    text = text_from_facenet[detection_idx]
-                except Exception as e:
-                    print(e)
+            # Priority 1: use the pre-built labels list when provided (new path).
+            # Priority 2: fall back to the original text_from_facenet/result_probability
+            #             path for backward compatibility (old path).
+            if labels is not None:
+                # New path: labels list already contains "#id Name (conf)" strings.
+                text = labels[detection_idx]
+                # Still compute highest_probability_value for the log line below.
+                highest_probability_value = (
+                    result_probability[detection_idx]
+                    if result_probability is not None
+                    else 0.0
+                )
             else:
-                text = 'Unknown' 
-                # recognition will happen only when the face probability  greateer than 87%.
+                # Old path: derive text from text_from_facenet + result_probability.
+                highest_probability_value = (
+                    result_probability[detection_idx]
+                    if result_probability is not None
+                    else 0.0
+                )
+                if highest_probability_value >= 0.87 and text_from_facenet is not None:
+                    try:
+                        text = text_from_facenet[detection_idx]
+                    except Exception as e:
+                        print(e)
+                        text = 'Unknown'
+                else:
+                    text = 'Unknown'
+                    # recognition will happen only when face probability >= 87%.
             # print('facenet result of highest prob index >>>>>>>>>>>>>>>>>>> : ',text)
 
             

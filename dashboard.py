@@ -305,7 +305,7 @@ elif page == "📷 Register Employee":
                             fpath = os.path.join(emp_dir, fname)
                             img = cv2.imread(fpath)
                             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                            st.image(img_rgb, use_container_width=True)
+                            st.image(img_rgb, width=200)
             else:
                 st.info("No images saved yet. Use the camera button to capture some.")
         else:
@@ -469,29 +469,84 @@ elif page == "🔴 Live Analysis":
     # ════════════════════════════════════════════════════
     # HELPER — run the frame processing loop
     # ════════════════════════════════════════════════════
-    def run_analysis_loop(cap, record_raw=False, raw_writer=None, result_writer=None):
+    def run_analysis_loop(
+        cap,
+        record_raw: bool = False,
+        raw_writer=None,
+        result_writer=None,
+        target_fps: int = 30,
+        ui_update_every: int = 2,
+    ):
         """
-        Shared frame loop used by all three modes.
-        cap           — open cv2.VideoCapture
-        record_raw    — whether to write raw frames to raw_writer
-        raw_writer    — cv2.VideoWriter for the input recording (can be None)
-        result_writer — cv2.VideoWriter for the annotated result (can be None)
+        Shared frame loop used by all three analysis modes.
+
+        Args:
+            cap             — open cv2.VideoCapture
+            record_raw      — whether to write raw frames to raw_writer
+            raw_writer      — cv2.VideoWriter for the input recording (can be None)
+            result_writer   — cv2.VideoWriter for the annotated result (can be None)
+            target_fps      — playback FPS for saved video files (always 30)
+            ui_update_every — only push every Nth frame to st.image() to reduce
+                              websocket churn; every frame is still written to file
+
+        Frame-pacing strategy (Task 2):
+            Model inference (YOLO + FaceNet + SVM) is slower than 30 fps.
+            Without pacing, simply stamping every processed frame at 33ms intervals
+            causes the saved video to play back at fast-forward speed.
+            Solution: after computing each annotated frame, enter a while loop that
+            writes the *most recently processed* frame to result_writer as many times
+            as needed to fill the wall-clock gap at the target_fps cadence.
+
+        UI throttle strategy (Task 3):
+            st.image() re-renders the full frame over the websocket on every call;
+            pushing every frame at inference speed saturates the connection and causes
+            jank. Mitigation:
+              1. Only call st.image() when idx % ui_update_every == 0.
+              2. Downscale the preview frame to max 480px wide before pushing.
+              3. Throttle with time.time() so UI updates target ~12 fps cadence.
+
+        NOTE (stretch goal): streamlit-webrtc is the architecturally correct solution
+        for true real-time smooth webcam preview. It uses a proper media stream
+        pipeline (WebRTC / RTP) instead of per-frame image re-renders over the
+        Streamlit websocket, which would eliminate the jank entirely. Consider
+        migrating the "Webcam — Live View" mode to streamlit-webrtc in a future PR.
         """
         callback_fn = import_main_callback()
         events = []
         idx    = 0
         import csv as csv_mod
 
+        # ── Frame-pacing state ────────────────────────────────────────────────
+        frame_interval  = 1.0 / target_fps
+        next_write_time = time.time()
+
+        # ── UI throttle state (Task 3) ────────────────────────────────────────
+        ui_frame_interval = 1.0 / 12.0   # target ~12 fps for Streamlit preview
+        last_ui_update    = 0.0           # wall-clock time of last st.image() call
+
+        # Preview downscale width (px) — full resolution still written to file
+        PREVIEW_WIDTH = 480
+
+        def _downscale_for_preview(bgr_frame: np.ndarray) -> np.ndarray:
+            h, w = bgr_frame.shape[:2]
+            if w <= PREVIEW_WIDTH:
+                return bgr_frame
+            scale = PREVIEW_WIDTH / w
+            return cv2.resize(bgr_frame, (PREVIEW_WIDTH, int(h * scale)),
+                              interpolation=cv2.INTER_AREA)
+
+        last_annotated = None   # most recently processed annotated frame
+
         while not st.session_state["stop_flag"]:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # Write raw frame
+            # ── Write raw frame to file (not paced — we write every captured frame)
             if record_raw and raw_writer:
                 raw_writer.write(frame)
 
-            # Run recognition
+            # ── Run recognition ───────────────────────────────────────────────
             try:
                 annotated = callback_fn(frame, idx)
             except Exception as e:
@@ -499,22 +554,42 @@ elif page == "🔴 Live Analysis":
                 cv2.putText(annotated, f"Err: {e}", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-            # Write annotated frame
-            if result_writer:
-                result_writer.write(annotated)
+            last_annotated = annotated
 
-            # Display side-by-side
-            raw_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            raw_frame_placeholder.image(raw_rgb, channels="RGB", width="stretch")
-            
-            rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-            analyzed_frame_placeholder.image(rgb, channels="RGB", width="stretch")
+            # ── Frame-pacing write to result file (Task 2) ───────────────────
+            # Duplicate the latest annotated frame to fill wall-clock gaps so
+            # the saved video plays back at correct real-time speed.
+            if result_writer:
+                now = time.time()
+                while next_write_time <= now:
+                    result_writer.write(last_annotated)
+                    next_write_time += frame_interval
+
+            # ── UI update with throttle + downscale (Task 3) ─────────────────
+            now = time.time()
+            push_to_ui = (
+                idx % ui_update_every == 0
+                and (now - last_ui_update) >= ui_frame_interval
+            )
+            if push_to_ui:
+                preview_raw      = _downscale_for_preview(frame)
+                preview_analyzed = _downscale_for_preview(annotated)
+
+                raw_frame_placeholder.image(
+                    cv2.cvtColor(preview_raw, cv2.COLOR_BGR2RGB),
+                    channels="RGB", width="stretch",
+                )
+                analyzed_frame_placeholder.image(
+                    cv2.cvtColor(preview_analyzed, cv2.COLOR_BGR2RGB),
+                    channels="RGB", width="stretch",
+                )
+                last_ui_update = now
 
             idx += 1
             st.session_state["frame_count"] = idx
             frames_metric.metric("🖼️ Frames Processed", idx)
 
-            # Attendance events
+            # ── Attendance events (read CSV written by callback) ──────────────
             today    = datetime.now().strftime('%Y_%m_%d')
             csv_path = os.path.join(ATTENDANCE_DIR, today, f"{today}_attendance_sheet.csv")
             if os.path.exists(csv_path):
@@ -529,6 +604,7 @@ elif page == "🔴 Live Analysis":
 
         return idx
 
+
     # ════════════════════════════════════════════════════
     # MODE 1 — Webcam Live View
     # ════════════════════════════════════════════════════
@@ -540,28 +616,6 @@ elif page == "🔴 Live Analysis":
         with st.spinner("Loading models…"):
             import_main_callback()
 
-        # cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
-        # if not cap.isOpened():
-        #     st.error(f"❌ Cannot open webcam (Index {camera_index}). Try changing the Camera Index.")
-        #     st.session_state["running"] = False
-        #     st.stop()
-
-        # fps = cap.get(cv2.CAP_PROP_FPS) or 20
-        # w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        # h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        # ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # result_path = os.path.join(RECORDINGS_DIR, f"result_{ts}.mp4")
-        # fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        # result_writer = cv2.VideoWriter(result_path, fourcc, fps, (w, h))
-
-        # n = run_analysis_loop(cap, record_raw=False, result_writer=result_writer)
-
-        # cap.release()
-        # result_writer.release()
-        # st.session_state["running"] = False
-        # st.session_state["result_video_path"] = result_path
-        # st.success(f"✅ Analysis complete. {n} frames processed.")
-        # show_session_videos()
 
 
         cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
@@ -575,28 +629,21 @@ elif page == "🔴 Live Analysis":
             st.stop()
 
         try:
-            fps = cap.get(cv2.CAP_PROP_FPS) or 20
+            TARGET_FPS = 30   # always write at 30 fps regardless of webcam's reported fps
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            result_path = os.path.join(
-                RECORDINGS_DIR,
-                f"result_{ts}.mp4"
-            )
+            result_path = os.path.join(RECORDINGS_DIR, f"result_{ts}.mp4")
 
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            result_writer = cv2.VideoWriter(
-                result_path,
-                fourcc,
-                fps,
-                (w, h)
-            )
+            result_writer = cv2.VideoWriter(result_path, fourcc, TARGET_FPS, (w, h))
 
             n = run_analysis_loop(
                 cap,
                 record_raw=False,
-                result_writer=result_writer
+                result_writer=result_writer,
+                target_fps=TARGET_FPS,
             )
 
             st.session_state["result_video_path"] = result_path
@@ -610,6 +657,7 @@ elif page == "🔴 Live Analysis":
 
             st.session_state["running"] = False
             st.session_state["stop_flag"] = False
+
 
 
     # ════════════════════════════════════════════════════
@@ -626,16 +674,16 @@ elif page == "🔴 Live Analysis":
             st.session_state["recording"] = False
             st.stop()
 
-        fps = cap.get(cv2.CAP_PROP_FPS) or 20
+        TARGET_FPS = 30   # always write at 30 fps regardless of webcam's reported fps
         w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
         raw_path    = os.path.join(RECORDINGS_DIR, f"recorded_{ts}.mp4")
         result_path = os.path.join(RECORDINGS_DIR, f"result_{ts}.mp4")
 
-        fourcc      = cv2.VideoWriter_fourcc(*"mp4v")
-        raw_writer    = cv2.VideoWriter(raw_path,    fourcc, fps, (w, h))
-        result_writer = cv2.VideoWriter(result_path, fourcc, fps, (w, h))
+        fourcc        = cv2.VideoWriter_fourcc(*"mp4v")
+        raw_writer    = cv2.VideoWriter(raw_path,    fourcc, TARGET_FPS, (w, h))
+        result_writer = cv2.VideoWriter(result_path, fourcc, TARGET_FPS, (w, h))
 
         feed_label.markdown("##### 🎥 Live Feed  <span style='color:#ef4444'>⏺ Recording</span>",
                             unsafe_allow_html=True)
@@ -644,7 +692,7 @@ elif page == "🔴 Live Analysis":
             import_main_callback()
 
         n = run_analysis_loop(cap, record_raw=True, raw_writer=raw_writer,
-                              result_writer=result_writer)
+                              result_writer=result_writer, target_fps=TARGET_FPS)
 
         cap.release()
         raw_writer.release()
@@ -670,18 +718,19 @@ elif page == "🔴 Live Analysis":
             st.session_state["running"] = False
             st.stop()
 
-        fps = cap.get(cv2.CAP_PROP_FPS) or 20
+        TARGET_FPS    = 30   # always write at 30 fps
         w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
         result_path   = os.path.join(RECORDINGS_DIR, f"result_{ts}.mp4")
         fourcc        = cv2.VideoWriter_fourcc(*"mp4v")
-        result_writer = cv2.VideoWriter(result_path, fourcc, fps, (w, h))
+        result_writer = cv2.VideoWriter(result_path, fourcc, TARGET_FPS, (w, h))
 
         with st.spinner("Loading models…"):
             import_main_callback()
 
-        n = run_analysis_loop(cap, record_raw=False, result_writer=result_writer)
+        n = run_analysis_loop(cap, record_raw=False, result_writer=result_writer,
+                              target_fps=TARGET_FPS)
 
         cap.release()
         result_writer.release()
@@ -715,17 +764,18 @@ elif page == "🔴 Live Analysis":
             st.session_state["running"] = False
             st.stop()
 
-        fps = cap.get(cv2.CAP_PROP_FPS) or 20
+        TARGET_FPS    = 30   # always write at 30 fps
         w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         result_path   = os.path.join(RECORDINGS_DIR, f"result_{ts}.mp4")
         fourcc        = cv2.VideoWriter_fourcc(*"mp4v")
-        result_writer = cv2.VideoWriter(result_path, fourcc, fps, (w, h))
+        result_writer = cv2.VideoWriter(result_path, fourcc, TARGET_FPS, (w, h))
 
         with st.spinner("Loading models…"):
             import_main_callback()
 
-        n = run_analysis_loop(cap, record_raw=False, result_writer=result_writer)
+        n = run_analysis_loop(cap, record_raw=False, result_writer=result_writer,
+                              target_fps=TARGET_FPS)
 
         cap.release()
         result_writer.release()

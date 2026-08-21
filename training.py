@@ -81,16 +81,21 @@ def get_embedding(face_img, embedder):
 def train_model(
     dataset_dir='facenet_files/dataset2',
     model_output_path='facenet_models/new_classifier_Jun27_759.pkl',
-    status_callback=None
+    status_callback=None,
+    use_augmentation: bool = True,
 ):
     """
     Loads all face images from dataset_dir, extracts FaceNet embeddings,
     trains an SVM classifier, and saves it to model_output_path.
 
     Args:
-        dataset_dir: Path to the dataset directory (one subfolder per person).
-        model_output_path: Path to save the trained SVM .pkl file.
-        status_callback: Optional callable(str) for progress reporting (e.g. st.write).
+        dataset_dir:         Path to the dataset directory (one subfolder per person).
+        model_output_path:   Path to save the trained SVM .pkl file.
+        status_callback:     Optional callable(str) for progress reporting (e.g. st.write).
+        use_augmentation:    If True (default), synthetically expand the dataset using
+                             augmentation.py before extracting embeddings.  Each real
+                             image produces ``n_variants=20`` lighting/pose variants
+                             so the classifier generalises better with fewer real photos.
 
     Returns:
         dict with 'train_acc', 'test_acc', and 'classes' keys.
@@ -99,6 +104,21 @@ def train_model(
         print(msg)
         if status_callback:
             status_callback(msg)
+
+    # ── Optional: expand dataset with augmented variants before training ──────
+    if use_augmentation:
+        try:
+            from augmentation import augment_dataset
+            log("Running image augmentation pipeline …")
+            aug_result = augment_dataset(
+                dataset_dir=dataset_dir,
+                n_variants=20,
+                status_callback=status_callback,
+            )
+            log(f"Augmentation done: {aug_result['total_source']} source images → "
+                f"{aug_result['total_generated']} variants generated.")
+        except Exception as aug_exc:
+            log(f"⚠️  Augmentation skipped ({aug_exc}). Continuing with original images.")
 
     log(f"Loading faces from: {dataset_dir}")
     faceloading = FACELOADING(dataset_dir)

@@ -1,151 +1,169 @@
 
-
+import time
 import numpy as np
 import supervision as sv
 from ultralytics import YOLO
-from facenet_files.facent_svm_rec_passing import * 
+from facenet_files.facent_svm_rec_passing import predict_face
 from supervision.annotators import core
-
-import gradio as gr
 
 import cv2 as cv
 from datetime import datetime
 
 import uuid
 import csv
+import os
 
 
-model = YOLO("yolo_models/yolov8n-face.pt") #updated version
-tracker = sv.ByteTrack()
-tracker = sv.ByteTrack()
-box_annotator = sv.BoundingBoxAnnotator()
+# ─────────────────────────────────────────────────────────────────────────────
+# Model / tracker singletons  (loaded once at import time)
+# ─────────────────────────────────────────────────────────────────────────────
+model = YOLO("yolo_models/yolov8n-face.pt")
+tracker = sv.ByteTrack()          # single instance — was accidentally duplicated before
+box_annotator   = sv.BoundingBoxAnnotator()
 label_annotator = sv.LabelAnnotator()
-# saved_names = set()
-saved_names = []
 
-trackeri_d = 1
+saved_names: list = []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-frame callback  (used by dashboard.py and the standalone loop below)
+# ─────────────────────────────────────────────────────────────────────────────
 def callback(frame: np.ndarray, _: int) -> np.ndarray:
-    results = model(frame)[0]
+    """
+    Process one frame: detect faces → track → recognise → annotate.
+
+    Returns:
+        annotated_frame: BGR numpy array with bounding boxes + labels drawn.
+    """
+    results    = model(frame)[0]
     detections = sv.Detections.from_ultralytics(results)
     detections = tracker.update_with_detections(detections)
 
-    labels = [
-        f"#{tracker_id} {results.names[class_id]}"
-        for class_id, tracker_id
-        in zip(detections.class_id, detections.tracker_id)
-    ]
-    try:
-        annotated_frame = box_annotator.annotate(
-            frame.copy(), detections=detections)
-        annotated_frame = label_annotator.annotate(
-            annotated_frame, detections=detections, labels=labels)
-        # print('inside the try >>>>>>')
+    # Draw bounding boxes first (labels added after recognition loop below)
+    annotated_frame = box_annotator.annotate(frame.copy(), detections=detections)
 
-    except Exception as E:
-        print(E) 
+    # ── Drawing the attendance line (horizontal, 50 px above centre) ─────────
+    height, width, _ = frame.shape
+    line_y      = (height // 2) - 50
+    start_point = (0, line_y)
+    end_point   = (width, line_y)
+    cv.line(annotated_frame, start_point, end_point, (0, 255, 0), 1)
 
-    # annotated_frame = box_annotator.annotate(
-    #     frame.copy(), detections=detections)
-    
-    facenet_results = []  # Initialize a list to collect face recognition results
+    # ── Per-detection face recognition ───────────────────────────────────────
+    facenet_results    = []
     result_probabiltys = []
-    
-    # drawing the line
-    height, width, _ = frame.shape # the line will be in the middle of the frame
-    line_y = (height // 2) - 50
-    start_point = (0, line_y) 
-    end_point = (width, line_y)
-    color = (0, 255, 0)  # Green color in BGR
-    thickness = 1  # Line thickness
-    cv.line(annotated_frame, start_point, end_point, color, thickness)
 
-    for detection,label in zip(detections.xyxy,labels):
+    for detection in detections.xyxy:
         x1, y1, x2, y2 = map(int, detection[:4])
-        # print('labels  >>>>>> : ',label)
-        
-        # extracting the detected face
-        face = frame[y1:y2, x1:x2]
-        print('getting face ################')
 
-        # facenet_result = predict_face(face)
-        print('Passing Rxtracted face to Recogition model ################ ')
+        # Extract the face crop
+        face = frame[y1:y2, x1:x2]
+
+        print("Passing extracted face to recognition model …")
         facenet_result, result_probabilty = predict_face(face)
-        print('Recognition complete ################')
-        name = facenet_result
-        
+        print("Recognition complete")
+
+        name      = facenet_result
         timestamp = datetime.now().strftime('%Y_%m_%d_%H:%M:%S')
-        filename = f'{name}_{timestamp}.jpg'
+        filename  = f"{name}_{timestamp}.jpg"
 
         current_date = datetime.now().strftime('%Y_%m_%d')
-        output_dir = os.path.join('marked_attendance',current_date)
-        os.makedirs(output_dir,exist_ok=True)
-        filepath = os.path.join(output_dir, filename)
+        output_dir   = os.path.join('marked_attendance', current_date)
+        os.makedirs(output_dir, exist_ok=True)
+        filepath  = os.path.join(output_dir, filename)
         hyperlink = os.path.abspath(filepath)
 
-
-
-        """ here I addinig new .csv file in each current date folder which contains - 
-        >>> Empoloyee name, unique Id, Timstamp, and Hyperlink(the path to the face croped image).
-        * It will help the admin to check all the people attendance in a single file. 
-        * Also it will help when we are using database to reduce the space.
+        # ── CSV attendance sheet ──────────────────────────────────────────────
+        """ Each day's folder gets a single CSV:
+            Name | UniqueID | Timestamp | Hyperlink (path to face-crop image)
         """
-
-        #csv file creation
-        csv_file_path = os.path.join(output_dir,f"{current_date}_attendance_sheet.csv")
-        csv__header = ['Name','UniqueID', 'Timestamp','Hyperlink']
-        unique_id = str(uuid.uuid4())
-        # print('unique_id >>>>>>>>>>>>>>>>>>> : ',unique_id)
+        csv_file_path = os.path.join(output_dir, f"{current_date}_attendance_sheet.csv")
+        csv_header    = ['Name', 'UniqueID', 'Timestamp', 'Hyperlink']
+        unique_id     = str(uuid.uuid4())
 
         if not os.path.exists(csv_file_path):
-            with open(csv_file_path, mode='w',newline='') as file:
+            with open(csv_file_path, mode='w', newline='') as file:
                 writer = csv.writer(file)
-                writer.writerow(csv__header)
+                writer.writerow(csv_header)
 
+        # Save face + log attendance when the person crosses the line
+        if (y1 <= line_y <= y2) and result_probabilty >= 0.87 and name not in saved_names:
+            cv.imwrite(filepath, face)
+            # Fixed: `filename.split('_'[0])` was a latent bug — index goes outside string
+            first_name = filename.split('_')[0]
+            saved_names.append(first_name)
 
-    # saving the attandance to the database(locally) when the person cross the line
-        # if (y1 <= line_y <= y2) and name != 'Unknown' and name not in saved_names :
-        if (y1 <= line_y <= y2) and result_probabilty >=0.87 and name not in saved_names :
-
-            cv.imwrite(filepath,face)
-            first_name = filename.split('_'[0]) # taking the firstname from 
-            # print('first_name >>>>>>>>>>>>>>>>>>> : ',first_name)
-
-            # first_name[0] means only the exact name without timestamp
-            saved_names.append(first_name[0])
-
-            #writing to csv
-            with open(csv_file_path,mode='a',newline='') as file:
+            with open(csv_file_path, mode='a', newline='') as file:
                 writer = csv.writer(file)
-                writer.writerow([first_name[0],unique_id,timestamp,hyperlink])
+                writer.writerow([first_name, unique_id, timestamp, hyperlink])
 
-
-
-
-        # facenet_results.append(facenet_result)[0]
         facenet_results.append(facenet_result)
-        # print('facenet_results   :  ',facenet_result)
         result_probabiltys.append(result_probabilty)
-        # print('result_probabiltys  :  ',result_probabiltys)
 
+    # ── Build labels AFTER recognition; annotate once with correct API ────────
+    if detections.tracker_id is not None and len(facenet_results) == len(detections.tracker_id):
+        labels = [
+            f"#{tracker_id} {name} ({prob:.2f})"
+            for tracker_id, name, prob
+            in zip(detections.tracker_id, facenet_results, result_probabiltys)
+        ]
+        annotated_frame = label_annotator.annotate(
+            annotated_frame, detections=detections, labels=labels
+        )
 
-    # print('labels >>>>>>>>>>>>>>> : ',labels)
-    annotated_frame = label_annotator.annotate(
-        annotated_frame, detections=detections, labels=labels,
-        text_from_facenet = facenet_results,result_probability = result_probabiltys)
-    
-    '''cv2.imshow is not woring in my env if you are using this ,try this
-    >>> cv2.imshow('live frame',annotated_frame)       '''
-    
-
-    cv.imwrite('live.png',annotated_frame)
-  
+    cv.imwrite('live.png', annotated_frame)
     return annotated_frame
 
 
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Standalone entry point — manual capture/write loop with 30 fps pacing.
+# Replaces sv.process_video() which has no fps-override argument; without
+# pacing the saved video plays back fast-forwarded when inference < 30 fps.
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    sv.process_video(
-        source_path="test_datas/Deepak.mp4",
-        target_path="result_datas/testig_video_result.mp4",
-        callback=callback
-    )
+    SOURCE_PATH = "test_datas/Deepak.mp4"
+    TARGET_PATH = "result_datas/testig_video_result.mp4"
+    TARGET_FPS  = 30
+
+    cap = cv.VideoCapture(SOURCE_PATH)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {SOURCE_PATH}")
+
+    w = int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))
+
+    os.makedirs(os.path.dirname(TARGET_PATH) or ".", exist_ok=True)
+    fourcc = cv.VideoWriter_fourcc(*"mp4v")
+    writer = cv.VideoWriter(TARGET_PATH, fourcc, TARGET_FPS, (w, h))
+
+    frame_interval  = 1.0 / TARGET_FPS
+    next_write_time = time.time()
+    last_annotated  = None
+    idx = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        last_annotated = callback(frame, idx)
+        idx += 1
+
+        # Frame-pacing: duplicate latest annotated frame to fill real-time gaps
+        # so the output video plays at correct speed even when inference is slow.
+        now = time.time()
+        while next_write_time <= now:
+            if last_annotated is not None:
+                writer.write(last_annotated)
+            next_write_time += frame_interval
+
+    # Flush any remaining wall-clock slots up to the last source frame
+    now = time.time()
+    while next_write_time <= now:
+        if last_annotated is not None:
+            writer.write(last_annotated)
+        next_write_time += frame_interval
+
+    cap.release()
+    writer.release()
+    print(f"Done. {idx} source frames processed → {TARGET_PATH}")
