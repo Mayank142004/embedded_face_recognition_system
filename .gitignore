@@ -8,6 +8,7 @@ result_datas/
 test_datas/
 svm_models/
 .idea/
+facenet_files/dataset2/
 
 *.zip
 
