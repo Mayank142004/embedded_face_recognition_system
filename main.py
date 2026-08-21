@@ -87,7 +87,7 @@ def callback(frame: np.ndarray, _: int) -> np.ndarray:
                 writer.writerow(csv_header)
 
         # Save face + log attendance when the person crosses the line
-        if (y1 <= line_y <= y2) and result_probabilty >= 0.87 and name not in saved_names:
+        if (y1 <= line_y <= y2) and name != "unknown" and name not in saved_names:
             cv.imwrite(filepath, face)
             # Fixed: `filename.split('_'[0])` was a latent bug — index goes outside string
             first_name = filename.split('_')[0]

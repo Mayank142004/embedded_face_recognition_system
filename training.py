@@ -155,8 +155,31 @@ def train_model(
     test_acc = accuracy_score(Y_test, svm_model.predict(X_test))
     log(f"Train accuracy: {train_acc:.4f} | Test accuracy: {test_acc:.4f}")
 
+    # --- Find Threshold using ROC curve ---
+    probs = svm_model.predict_proba(X_test)
+    max_probs = np.max(probs, axis=1)
+    preds = np.argmax(probs, axis=1)
+    correct = (preds == Y_test).astype(int)
+    
+    if len(np.unique(correct)) <= 1:
+        # Fallback to train set if test set is perfectly classified
+        probs = svm_model.predict_proba(X_train)
+        max_probs = np.max(probs, axis=1)
+        preds = np.argmax(probs, axis=1)
+        correct = (preds == Y_train).astype(int)
+
+    if len(np.unique(correct)) > 1:
+        from sklearn.metrics import roc_curve
+        fpr, tpr, thresholds = roc_curve(correct, max_probs)
+        optimal_idx = np.argmax(tpr - fpr)
+        optimal_threshold = thresholds[optimal_idx]
+        log(f"Calculated optimal threshold from ROC curve: {optimal_threshold:.4f}")
+    else:
+        optimal_threshold = 0.85
+        log(f"No misclassifications found to compute ROC, defaulting threshold to {optimal_threshold}")
+
     with open(model_output_path, 'wb') as f:
-        pickle.dump((svm_model, list(encoder.classes_)), f)
+        pickle.dump((svm_model, list(encoder.classes_), optimal_threshold), f)
     log(f"Model saved to: {model_output_path}")
 
     return {

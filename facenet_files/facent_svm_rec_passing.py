@@ -13,27 +13,30 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # Initialize the FaceNet embedder
 embedder = FaceNet()
 
-# Load the new classifier model
-# with open('svm_models/yoloCropSvmModel160x160.pkl', 'rb') as f:
-with open('facenet_models/new_classifier_Jun27_759.pkl', 'rb') as f:
-    model = pickle.load(f)
-    labels = model[1] # it will give the labels list no need to add anything
-    print('Registered empolyees >>>>>>>>>>>>>>>>>>> :', model[1])
-
-
-# Re-encode the labels
-labels = labels
-encoder = LabelEncoder()
-encoder.fit(labels)
-
 # Function to write labels to a file
 def write_labels_to_file(labels, filename='registered_employees.txt'):
     with open(filename, 'w') as file:
         for label in labels:
             file.write(f"{label}\n")
 
-# Write the labels to the file
-write_labels_to_file(labels)
+def load_model():
+    global model_svm, labels, encoder, optimal_threshold
+    with open('facenet_models/new_classifier_Jun27_759.pkl', 'rb') as f:
+        model_obj = pickle.load(f)
+        if len(model_obj) >= 3:
+            model_svm, labels, optimal_threshold = model_obj[:3]
+        else:
+            model_svm, labels = model_obj
+            optimal_threshold = 0.85
+    
+    print('Registered empolyees >>>>>>>>>>>>>>>>>>> :', labels)
+    encoder = LabelEncoder()
+    encoder.fit(labels)
+    write_labels_to_file(labels)
+    
+load_model()
+
+
 
 
 def predict_face(face_image):
@@ -49,9 +52,9 @@ def predict_face(face_image):
     embedding = np.expand_dims(face_embedding, axis=0)
     # print('embedding shape ................ : ',embedding.shape)
 
-    ypreds = model[0].predict(embedding)
+    ypreds = model_svm.predict(embedding)
     # print('Predictions:', ypreds)  # Here we only get the index
-    ypreds_probability_list = model[0].predict_proba(embedding)
+    ypreds_probability_list = model_svm.predict_proba(embedding)
    
     # Taking index and highest probability
     probabilities = ypreds_probability_list[0]
@@ -66,9 +69,11 @@ def predict_face(face_image):
     # Inverse transform to get the predicted label
     # print('aaaaaaaaaaaaa',ypreds[0])
     result = encoder.inverse_transform(ypreds)[0]
-    # print('Predicted label >>>>>>>>>>>>>>>>>>> : ', result)
-
-    return result, result_probability
+    
+    if result_probability >= optimal_threshold:
+        return result, result_probability
+    else:
+        return "unknown", result_probability
 
 def get_embedding(face_img):
     face_img = face_img.astype('float32')

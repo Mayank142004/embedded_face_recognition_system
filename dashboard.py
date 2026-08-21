@@ -340,6 +340,8 @@ elif page == "📷 Register Employee":
             # Force reload of the inference module so main.py picks up the new model
             if "main_module" in st.session_state:
                 del st.session_state["main_module"]
+            from facenet_files.facent_svm_rec_passing import load_model
+            load_model()
         except Exception as e:
             st.error(f"❌ Training failed: {e}")
 
