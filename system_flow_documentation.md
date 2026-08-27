@@ -78,3 +78,49 @@ The Streamlit UI is where the user interacts with the system.
 ## 4. Summary of Data Flow
 1. **Video Data:** Pi Camera → `cv2` → AI Pipeline → `cv2.imencode` → `websocket` → WiFi → FastAPI → `websocket` → Streamlit → `st.image`.
 2. **Attendance Data:** Pi Line Cross → JSON Payload → `paho-mqtt` → WiFi → Mosquitto Broker → `mqtt_subscriber.py` → `pymongo` → MongoDB.
+
+---
+
+## 5. How to Run the Project
+
+To successfully launch the system, services must be started in the correct order across both devices.
+
+### A. Start Services on the Laptop (Server)
+Your laptop acts as the central hub. It requires three separate terminal windows to run its microservices.
+
+**Terminal 1: Start the FastAPI Server (WebSocket Router)**
+```bash
+cd ~/Desktop/FaceRecognitionSystem
+source .venv/bin/activate
+uvicorn server:app --host 0.0.0.0 --port 8000
+```
+*(This must be running first, otherwise the Pi has nowhere to send its video).*
+
+**Terminal 2: Start the MQTT Subscriber (Database Writer)**
+```bash
+cd ~/Desktop/FaceRecognitionSystem
+source .venv/bin/activate
+python mqtt_subscriber.py
+```
+*(This must be running, otherwise attendance events will be ignored).*
+
+**Terminal 3: Start the Streamlit Dashboard (UI)**
+```bash
+cd ~/Desktop/FaceRecognitionSystem
+source .venv/bin/activate
+streamlit run dashboard.py
+```
+*(This will open the dashboard in your web browser).*
+
+*Note: Ensure your MongoDB and Mosquitto background services are running (`sudo systemctl start mongod mosquitto`).*
+
+### B. Start the Camera on the Raspberry Pi (Edge)
+Once the laptop services are running, you can boot up the edge node.
+
+**Terminal: SSH into the Pi**
+```bash
+cd ~/FaceAttend
+source .venv/bin/activate
+python pi_runner.py
+```
+*(The Pi will automatically download the latest AI model from the laptop, connect to the camera, and begin streaming video and attendance events).*
