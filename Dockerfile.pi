@@ -1,0 +1,67 @@
+# Raspberry Pi — Docker image for Face Attendance edge node
+# Build on the Pi:  docker build -f Dockerfile.pi -t faceattend-pi .
+# Run on the Pi:    See docker-compose.pi.yml or the deployment guide
+
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV TF_CPP_MIN_LOG_LEVEL=2
+
+# ── System dependencies (OpenCV, HDF5, video) ─────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libatlas-base-dev \
+    libhdf5-dev \
+    libharfbuzz-dev \
+    libopenjp2-7 \
+    libtiff6 \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libv4l-dev \
+    libxvidcore-dev \
+    libx264-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libgomp1 \
+    v4l-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python dependencies ───────────────────────────────────
+COPY requirements_pi.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements_pi.txt
+
+# ── Application code ──────────────────────────────────────
+# Only copy the files the Pi needs (not training, dashboard, etc.)
+COPY config.py .
+COPY db.py .
+COPY gcs_storage.py .
+COPY model_sync.py .
+COPY line_crossing.py .
+COPY mqtt_publisher.py .
+COPY main.py .
+COPY pi_runner.py .
+
+COPY facenet_files/__init__.py         facenet_files/
+COPY facenet_files/facent_svm_rec_passing.py facenet_files/
+
+# ── Default model + YOLO weights (baked into image) ───────
+# These get overwritten at runtime by model_sync if a newer
+# version exists on GCS, but having them baked in means the
+# container can start immediately without network access.
+COPY facenet_models/svm_classifier.pkl facenet_models/
+COPY yolo_models/yolov8n-face.pt       yolo_models/
+
+# ── Entrypoint ────────────────────────────────────────────
+# Default: camera 0, 5 FPS (safe for Pi 3).
+# Override with: docker run ... faceattend-pi --camera 1 --fps 10
+ENTRYPOINT ["python", "pi_runner.py"]
+CMD ["--camera", "0", "--fps", "5"]

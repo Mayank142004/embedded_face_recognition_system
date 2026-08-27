@@ -1,0 +1,38 @@
+# docker-compose.pi.yml — Run the face attendance edge node on Raspberry Pi
+#
+# Usage:
+#   docker compose -f docker-compose.pi.yml up -d
+#   docker compose -f docker-compose.pi.yml logs -f
+#   docker compose -f docker-compose.pi.yml down
+
+services:
+  faceattend:
+    build:
+      context: .
+      dockerfile: Dockerfile.pi
+    container_name: faceattend-pi
+    restart: unless-stopped
+
+    # Pass the USB camera device into the container
+    devices:
+      - /dev/video0:/dev/video0
+
+    # .env file with MQTT, MongoDB, GCS, API config
+    env_file:
+      - .env
+
+    # Mount the GCP service account key
+    volumes:
+      - ./gcp-key.json:/app/gcp-key.json:ro
+      # Persist model downloads so they survive container restarts
+      - pi_models:/app/facenet_models
+
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-key.json
+
+    # Override default CMD if needed (e.g. different camera or FPS)
+    # command: ["--camera", "0", "--fps", "10"]
+
+volumes:
+  pi_models:
+    driver: local

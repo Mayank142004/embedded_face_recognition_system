@@ -1,18 +1,42 @@
-balancedFaceCrops/
-facenet_backup/
-20180402_114759/
-backup_files/
-facent_copy/
-models/
-result_datas/
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+data/dataset/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Models (Heavy files)
+# facenet_models/
+# yolo_models/
+# *.pt
+# *.tflite
+# *.pkl
+# *.h5
+# *.onnx
+
+# Data & Privacy
+data/
+recordings/
 test_datas/
-svm_models/
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.avi
+
+# OS & Editor
+.DS_Store
 .idea/
-# facenet_files/dataset2/
+.vscode/
+.agents/
+*.swp
 
-*.zip
 
-registered_employees.txt
-marked_attendance/core.py
-marked_attendance/core_updatedAfterPobability.py
-
+uvicorn.log 
