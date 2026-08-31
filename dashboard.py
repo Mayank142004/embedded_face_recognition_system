@@ -377,10 +377,16 @@ elif page == "🔴 Live Analysis":
             record_start_btn = record_stop_btn = analyze_recorded_btn = server_stream_btn = local_start_btn = False
 
         st.markdown("---")
-        frames_metric = st.empty()
+        mcol1, mcol2 = st.columns(2)
+        with mcol1:
+            frames_metric = st.empty()
+        with mcol2:
+            fps_metric = st.empty()
 
     with info_col:
         st.markdown("##### 🎥 Live Feeds")
+        show_feed = st.toggle("📺 Show Video Feed", value=True, help="Toggle to hide/show live video (attendance still runs in background)")
+        
         feed_col1, feed_col2 = st.columns(2)
         with feed_col1:
             st.markdown("**Input (Raw)**")
@@ -437,6 +443,9 @@ elif page == "🔴 Live Analysis":
         next_write_time = time.time()
         last_ui_update = 0.0
         
+        fps_start_time = time.time()
+        fps_frame_count = 0
+        
         while not st.session_state["stop_flag"]:
             ret, frame = cap.read()
             if not ret: break
@@ -455,14 +464,30 @@ elif page == "🔴 Live Analysis":
                     result_writer.write(annotated)
                     next_write_time += frame_interval
 
-            now = time.time()
-            if idx % 2 == 0 and (now - last_ui_update) >= (1/12.0):
-                pr_r, pr_a = cv2.resize(frame, (480, int(480*frame.shape[0]/frame.shape[1]))), cv2.resize(annotated, (480, int(480*annotated.shape[0]/annotated.shape[1])))
-                raw_frame_placeholder.image(cv2.cvtColor(pr_r, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-                analyzed_frame_placeholder.image(cv2.cvtColor(pr_a, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-                last_ui_update = now
+            if show_feed:
+                now = time.time()
+                if idx % 2 == 0 and (now - last_ui_update) >= (1/12.0):
+                    pr_r, pr_a = cv2.resize(frame, (480, int(480*frame.shape[0]/frame.shape[1]))), cv2.resize(annotated, (480, int(480*annotated.shape[0]/annotated.shape[1])))
+                    raw_frame_placeholder.image(cv2.cvtColor(pr_r, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+                    analyzed_frame_placeholder.image(cv2.cvtColor(pr_a, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+                    last_ui_update = now
+            else:
+                # Clear placeholders if feed is hidden
+                if idx == 0 or (idx % 30 == 0): # just call empty() periodically or once
+                    raw_frame_placeholder.empty()
+                    analyzed_frame_placeholder.empty()
 
             idx += 1
+            fps_frame_count += 1
+            
+            # FPS calculation
+            now_fps = time.time()
+            if now_fps - fps_start_time >= 1.0:
+                fps = fps_frame_count / (now_fps - fps_start_time)
+                fps_metric.metric("⚡ Live FPS", f"{fps:.1f}")
+                fps_start_time = now_fps
+                fps_frame_count = 0
+
             frames_metric.metric("🖼️ Frames Processed", idx)
 
             att_logs = get_today_attendance()
@@ -472,13 +497,19 @@ elif page == "🔴 Live Analysis":
 
         return idx
 
-    if start_btn or record_start_btn or analyze_recorded_btn or server_stream_btn or local_start_btn:
-        st.session_state["stop_flag"] = False
-        st.session_state["running"] = start_btn or analyze_recorded_btn or server_stream_btn or local_start_btn
-        st.session_state["recording"] = record_start_btn
+    if start_btn: st.session_state["active_mode"] = "pi_live"
+    elif local_start_btn: st.session_state["active_mode"] = "local_live"
+    elif server_stream_btn: st.session_state["active_mode"] = "server_stream"
+    elif record_start_btn: st.session_state["active_mode"] = "record_video"
+    elif analyze_recorded_btn: st.session_state["active_mode"] = "analyze_video"
+
+    if st.session_state.get("active_mode") and not st.session_state.get("stop_flag"):
+        st.session_state["running"] = st.session_state["active_mode"] != "record_video"
+        st.session_state["recording"] = st.session_state["active_mode"] == "record_video"
+        mode = st.session_state["active_mode"]
 
         # ── LOCAL ANALYSIS (laptop camera, isolated from Pi) ──
-        if local_start_btn:
+        if mode == "local_live":
             import main_local as ml
             cam_idx = ml.detect_camera()
             cap = cv2.VideoCapture(cam_idx)
@@ -493,6 +524,9 @@ elif page == "🔴 Live Analysis":
 
             idx = 0
             last_ui_update = 0.0
+            fps_start_time = time.time()
+            fps_frame_count = 0
+            
             while not st.session_state["stop_flag"]:
                 ret, frame = cap.read()
                 if not ret:
@@ -504,17 +538,31 @@ elif page == "🔴 Live Analysis":
                     cv2.putText(annotated, f"Err: {e}", (10, 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-                now = time.time()
-                if idx % 2 == 0 and (now - last_ui_update) >= (1 / 12.0):
-                    pr_r = cv2.resize(frame, (480, int(480 * frame.shape[0] / frame.shape[1])))
-                    pr_a = cv2.resize(annotated, (480, int(480 * annotated.shape[0] / annotated.shape[1])))
-                    raw_frame_placeholder.image(cv2.cvtColor(pr_r, cv2.COLOR_BGR2RGB),
-                                                channels="RGB", use_container_width=True)
-                    analyzed_frame_placeholder.image(cv2.cvtColor(pr_a, cv2.COLOR_BGR2RGB),
-                                                     channels="RGB", use_container_width=True)
-                    last_ui_update = now
+                if show_feed:
+                    now = time.time()
+                    if idx % 2 == 0 and (now - last_ui_update) >= (1 / 12.0):
+                        pr_r = cv2.resize(frame, (480, int(480 * frame.shape[0] / frame.shape[1])))
+                        pr_a = cv2.resize(annotated, (480, int(480 * annotated.shape[0] / annotated.shape[1])))
+                        raw_frame_placeholder.image(cv2.cvtColor(pr_r, cv2.COLOR_BGR2RGB),
+                                                    channels="RGB", use_container_width=True)
+                        analyzed_frame_placeholder.image(cv2.cvtColor(pr_a, cv2.COLOR_BGR2RGB),
+                                                         channels="RGB", use_container_width=True)
+                        last_ui_update = now
+                else:
+                    if idx == 0 or (idx % 30 == 0):
+                        raw_frame_placeholder.empty()
+                        analyzed_frame_placeholder.empty()
 
                 idx += 1
+                fps_frame_count += 1
+                
+                now_fps = time.time()
+                if now_fps - fps_start_time >= 1.0:
+                    fps = fps_frame_count / (now_fps - fps_start_time)
+                    fps_metric.metric("⚡ Live FPS", f"{fps:.1f}")
+                    fps_start_time = now_fps
+                    fps_frame_count = 0
+
                 frames_metric.metric("🖼️ Frames Processed", idx)
 
                 # Refresh local attendance table every 30 frames
@@ -529,7 +577,7 @@ elif page == "🔴 Live Analysis":
             st.success(f"✅ Local Analysis stopped. {idx} frames processed.")
             st.rerun()
 
-        if server_stream_btn:
+        elif mode == "server_stream":
             import websockets
             import asyncio
             from config import WS_BASE_URL
@@ -543,6 +591,9 @@ elif page == "🔴 Live Analysis":
             
             async def consume_single_stream(uri_suffix, placeholder, metric_name):
                 idx = 0
+                fps_start_time = time.time()
+                fps_frame_count = 0
+                
                 uri = f"{WS_BASE_URL}/ws/stream/ui/{uri_suffix}"
                 try:
                     async with websockets.connect(uri) as ws:
@@ -555,18 +606,34 @@ elif page == "🔴 Live Analysis":
                                         data = await asyncio.wait_for(ws.recv(), timeout=0.005)
                                     except asyncio.TimeoutError:
                                         break
-                                nparr = np.frombuffer(data, np.uint8)
-                                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
+                                
+                                if show_feed:
+                                    nparr = np.frombuffer(data, np.uint8)
+                                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                    placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
+                                else:
+                                    if idx == 0 or (idx % 30 == 0):
+                                        placeholder.empty()
                                 
                                 idx += 1
-                                # Refresh attendance board (only on analyzed stream to avoid double-calling)
-                                if uri_suffix == "analyzed" and idx % 30 == 0:
-                                    att_logs = get_today_attendance()
-                                    if att_logs:
-                                        df = pd.DataFrame(att_logs)[["emp_id", "emp_name", "timestamp", "status"]]
-                                        events_placeholder.dataframe(df.tail(10), use_container_width=True)
+                                if uri_suffix == "analyzed":
+                                    fps_frame_count += 1
+                                    now_fps = time.time()
+                                    if now_fps - fps_start_time >= 1.0:
+                                        fps = fps_frame_count / (now_fps - fps_start_time)
+                                        fps_metric.metric("⚡ Live FPS", f"{fps:.1f}")
+                                        fps_start_time = now_fps
+                                        fps_frame_count = 0
+                                    
+                                    frames_metric.metric("🖼️ Frames Processed", idx)
+                                    
+                                    # Refresh attendance board
+                                    if idx % 30 == 0:
+                                        att_logs = get_today_attendance()
+                                        if att_logs:
+                                            df = pd.DataFrame(att_logs)[["emp_id", "emp_name", "timestamp", "status"]]
+                                            events_placeholder.dataframe(df.tail(10), use_container_width=True)
                             except asyncio.TimeoutError:
                                 continue
                 except Exception as e:
@@ -581,21 +648,23 @@ elif page == "🔴 Live Analysis":
             asyncio.run(consume_both_streams())
             st.rerun()
 
-        elif analyze_recorded_btn:
+        elif mode == "analyze_video":
             cap = cv2.VideoCapture(st.session_state["recorded_video_path"])
-        elif source == "Upload Video File":
+        elif source == "Upload Video File" and mode == "pi_live": # wait, pi_live is used as default when Analyze Video is clicked
+            # Let's check: button was start_btn, so mode is pi_live.
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             raw_path = os.path.join(RECORDINGS_DIR, f"uploaded_{ts}.mp4")
             with open(raw_path, "wb") as f: f.write(uploaded_video.read())
             st.session_state["recorded_video_path"] = raw_path
             cap = cv2.VideoCapture(raw_path)
-        else:
+        else: # pi_live on normal camera or record_video
             cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
 
-        if source != "Server Stream (Pi)":
+        if mode not in ["server_stream", "local_live"]:
             if not cap.isOpened():
                 st.error("❌ Cannot open video source.")
                 st.session_state.update(running=False, recording=False)
+                st.session_state["active_mode"] = None
                 st.stop()
 
             w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -604,19 +673,19 @@ elif page == "🔴 Live Analysis":
             res_writer = cv2.VideoWriter(res_path, cv2.VideoWriter_fourcc(*"mp4v"), 30, (w, h))
             
             raw_writer = None
-            if record_start_btn:
+            if mode == "record_video":
                 raw_path = os.path.join(RECORDINGS_DIR, f"recorded_{ts}.mp4")
                 raw_writer = cv2.VideoWriter(raw_path, cv2.VideoWriter_fourcc(*"mp4v"), 30, (w, h))
                 st.session_state["recorded_video_path"] = raw_path
 
             with st.spinner("Loading models…"): import_main_callback()
             
-            n = run_analysis_loop(cap, record_raw=record_start_btn, raw_writer=raw_writer, result_writer=res_writer)
+            n = run_analysis_loop(cap, record_raw=(mode=="record_video"), raw_writer=raw_writer, result_writer=res_writer)
             
             cap.release()
             res_writer.release()
             if raw_writer: raw_writer.release()
             
-            st.session_state.update(running=False, recording=False, result_video_path=res_path)
+            st.session_state.update(running=False, recording=False, result_video_path=res_path, active_mode=None)
             st.success(f"✅ Processing complete. {n} frames.")
             st.rerun()
