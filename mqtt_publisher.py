@@ -18,7 +18,15 @@ _client: Optional[mqtt.Client] = None
 def _get_client() -> mqtt.Client:
     global _client
     if _client is None or not _client.is_connected():
+        # C5 FIX: Close old client before creating new one to prevent thread leaks
+        if _client is not None:
+            try:
+                _client.loop_stop()
+                _client.disconnect()
+            except Exception:
+                pass
         _client = mqtt.Client(client_id=MQTT_CLIENT_ID_PUB)
+        _client.reconnect_delay_set(min_delay=1, max_delay=30)
         try:
             _client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, keepalive=60)
             _client.loop_start()

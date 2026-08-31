@@ -7,7 +7,8 @@ except ImportError:
 
 class YOLOTFLite:
     def __init__(self, model_path, input_size=320, conf_thres=0.5, iou_thres=0.4):
-        self.interpreter = tflite.Interpreter(model_path=model_path)
+        # P2 FIX: Use all 4 CPU cores for ~3x speedup on Pi 3/4
+        self.interpreter = tflite.Interpreter(model_path=model_path, num_threads=4)
         self.interpreter.allocate_tensors()
         self.input_details = self.interpreter.get_input_details()
         self.output_details = self.interpreter.get_output_details()

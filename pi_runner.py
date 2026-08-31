@@ -30,7 +30,7 @@ def main():
     parser = argparse.ArgumentParser(description="Face Attendance — Pi Runner")
     parser.add_argument("--camera", type=int, default=0, help="Camera index (default 0)")
     parser.add_argument("--show", action="store_true", help="Show local OpenCV preview window")
-    parser.add_argument("--fps", type=int, default=15, help="Target processing FPS (default 15)")
+    parser.add_argument("--fps", type=int, default=30, help="Target processing FPS (default 15)")
     args = parser.parse_args()
 
     # ── Print startup banner ───────────────────────────────
@@ -76,10 +76,16 @@ def main():
 
     # ── Open camera ────────────────────────────────────────
     logger.info("Opening camera /dev/video%d ...", args.camera)
-    cap = cv.VideoCapture(args.camera)
+    cap = cv.VideoCapture(args.camera, cv.CAP_V4L2)
     if not cap.isOpened():
         logger.error("Cannot open camera %d. Check USB connection.", args.camera)
         sys.exit(1)
+
+    # L2 FIX: Minimize camera buffer and force MJPG to remove standing delay
+    cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
+    cap.set(cv.CAP_PROP_FOURCC, cv.VideoWriter_fourcc(*'MJPG'))
+    cap.set(cv.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv.CAP_PROP_FRAME_HEIGHT, 480)
 
     w = int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))

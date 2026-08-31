@@ -20,12 +20,14 @@ from config import (
     MQTT_BROKER_HOST,
     MQTT_BROKER_PORT,
     MQTT_TOPIC,
+    MQTT_LOCAL_TOPIC,
     MQTT_CLIENT_ID_SUB,
 )
 from db import (
     ensure_indexes,
     record_attendance_in,
     record_attendance_out,
+    record_local_attendance_in,
     get_employee_dict,
 )
 
@@ -39,14 +41,58 @@ logger = logging.getLogger("mqtt_subscriber")
 # ── MQTT callbacks ────────────────────────────────────────
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        logger.info("Connected — subscribing to '%s'", MQTT_TOPIC)
+        logger.info("Connected — subscribing to Pi topic '%s'", MQTT_TOPIC)
         client.subscribe(MQTT_TOPIC, qos=1)
+        logger.info("Connected — subscribing to Local topic '%s'", MQTT_LOCAL_TOPIC)
+        client.subscribe(MQTT_LOCAL_TOPIC, qos=1)
     else:
         logger.error("Connection failed (rc=%s)", rc)
 
 
 def on_message(client, userdata, msg):
-    """Process one MQTT message and apply business rules before writing."""
+    """Route message to the correct collection based on which topic it came from."""
+    if msg.topic == MQTT_LOCAL_TOPIC:
+        _handle_local_message(msg)
+    else:
+        _handle_pi_message(msg)
+
+
+def _handle_local_message(msg):
+    """Write local camera attendance events to attendance_local collection."""
+    try:
+        payload = json.loads(msg.payload.decode())
+        emp_id = payload.get("emp_id", "")
+        ts_str = payload.get("timestamp", "")
+        confidence = payload.get("confidence", 0.0)
+
+        if not emp_id:
+            logger.warning("Local: Invalid payload — skipping: %s", payload)
+            return
+
+        timestamp = (
+            datetime.fromisoformat(ts_str)
+            if ts_str
+            else datetime.now(timezone.utc)
+        )
+
+        emp_dict = get_employee_dict()
+        emp_name = emp_dict.get(emp_id, emp_id)
+
+        written = record_local_attendance_in(emp_id, emp_name, timestamp)
+        if written:
+            logger.info(
+                "✅ LOCAL IN recorded: %s (%s) at %s  conf=%.2f",
+                emp_id, emp_name, timestamp.isoformat(), confidence,
+            )
+        else:
+            logger.debug("⏭  LOCAL IN skipped (already exists today): %s", emp_id)
+
+    except Exception as e:
+        logger.error("Error processing local message: %s — payload: %s", e, msg.payload)
+
+
+def _handle_pi_message(msg):
+    """Write Pi camera attendance events to the main attendance collection."""
     try:
         payload = json.loads(msg.payload.decode())
         emp_id = payload.get("emp_id", "")

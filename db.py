@@ -39,6 +39,11 @@ def get_attendance_col() -> Collection:
     return get_db()["attendance"]
 
 
+def get_local_attendance_col() -> Collection:
+    """Separate collection for laptop/local camera attendance."""
+    return get_db()["attendance_local"]
+
+
 # ── Helpers ────────────────────────────────────────────────
 def _local_today() -> str:
     """Return today's date as YYYY-MM-DD in the configured timezone."""
@@ -62,6 +67,14 @@ def ensure_indexes():
         [("emp_id", ASCENDING), ("date", ASCENDING), ("status", ASCENDING)]
     )
     attendance.create_index("date")
+
+    # Same indexes for local attendance collection
+    local_att = get_local_attendance_col()
+    local_att.create_index([("emp_id", ASCENDING), ("timestamp", ASCENDING)])
+    local_att.create_index(
+        [("emp_id", ASCENDING), ("date", ASCENDING), ("status", ASCENDING)]
+    )
+    local_att.create_index("date")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -219,5 +232,63 @@ def get_today_attendance_count() -> int:
     """Return the number of unique "in" events for today."""
     date_str = _local_today()
     return get_attendance_col().count_documents(
+        {"date": date_str, "status": "in"}
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# Local Camera Attendance CRUD (attendance_local collection)
+# ═══════════════════════════════════════════════════════════
+def record_local_attendance_in(
+    emp_id: str,
+    emp_name: str,
+    timestamp: datetime = None,
+) -> bool:
+    """
+    Record an "in" event into the local camera attendance collection.
+    Written once per day per employee.
+    Returns True if a new record was created, False if already exists.
+    """
+    if timestamp is None:
+        timestamp = _utc_now()
+
+    tz = pytz.timezone(TIMEZONE)
+    local_dt = (
+        timestamp.astimezone(tz)
+        if timestamp.tzinfo
+        else pytz.utc.localize(timestamp).astimezone(tz)
+    )
+    date_str = local_dt.strftime("%Y-%m-%d")
+
+    if get_local_attendance_col().find_one(
+        {"emp_id": emp_id, "date": date_str, "status": "in"}
+    ):
+        return False
+
+    get_local_attendance_col().insert_one({
+        "emp_id": emp_id,
+        "emp_name": emp_name,
+        "timestamp": timestamp,
+        "date": date_str,
+        "status": "in",
+        "source": "local_camera",
+    })
+    return True
+
+
+def get_today_local_attendance() -> list[dict]:
+    """Return all local camera attendance records for today, sorted by timestamp."""
+    date_str = _local_today()
+    return list(
+        get_local_attendance_col()
+        .find({"date": date_str}, {"_id": 0})
+        .sort("timestamp", ASCENDING)
+    )
+
+
+def get_today_local_attendance_count() -> int:
+    """Return count of unique local camera 'in' events for today."""
+    date_str = _local_today()
+    return get_local_attendance_col().count_documents(
         {"date": date_str, "status": "in"}
     )

@@ -31,14 +31,17 @@ async def websocket_pi_stream(websocket: WebSocket, stream_type: str):
     try:
         while True:
             data = await websocket.receive_bytes()
-            disconnected = set()
-            for client in ui_clients[stream_type]:
-                try:
-                    await client.send_bytes(data)
-                except Exception:
-                    disconnected.add(client)
-            for c in disconnected:
-                ui_clients[stream_type].remove(c)
+            # L3 FIX: Fan-out concurrently so one slow viewer doesn't stall others
+            clients = list(ui_clients[stream_type])
+            if clients:
+                results = await asyncio.gather(
+                    *(c.send_bytes(data) for c in clients),
+                    return_exceptions=True
+                )
+                # Remove clients that errored
+                for client, result in zip(clients, results):
+                    if isinstance(result, Exception):
+                        ui_clients[stream_type].discard(client)
     except WebSocketDisconnect:
         print(f"Pi disconnected from {stream_type} stream.")
 

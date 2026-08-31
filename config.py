@@ -29,8 +29,10 @@ GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "face-attendance-bucket")
 # ── MQTT ───────────────────────────────────────────────────
 MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "192.168.1.29")
 MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
-MQTT_TOPIC = os.getenv("MQTT_TOPIC", "attendance/events")
+MQTT_TOPIC = os.getenv("MQTT_TOPIC", "attendance/events")              # Pi camera topic
+MQTT_LOCAL_TOPIC = os.getenv("MQTT_LOCAL_TOPIC", "attendance/local_events")  # Laptop camera topic
 MQTT_CLIENT_ID_PUB = os.getenv("MQTT_CLIENT_ID_PUB", "pi-publisher")
+MQTT_CLIENT_ID_LOCAL_PUB = os.getenv("MQTT_CLIENT_ID_LOCAL_PUB", "local-publisher")
 MQTT_CLIENT_ID_SUB = os.getenv("MQTT_CLIENT_ID_SUB", "attendance-subscriber")
 
 # ── Timezone (date boundaries use this for "today") ────────

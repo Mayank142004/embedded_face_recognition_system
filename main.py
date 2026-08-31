@@ -44,11 +44,22 @@ class WSStreamer:
                 if self.ws is None:
                     self._connect()
                 if self.ws:
-                    _, buffer = cv.imencode('.jpg', frame, [cv.IMWRITE_JPEG_QUALITY, 50])
+                    # Resize before encoding to save CPU and bandwidth
+                    h, w = frame.shape[:2]
+                    new_w = 480
+                    new_h = int(new_w * h / w)
+                    small = cv.resize(frame, (new_w, new_h))
+                    _, buffer = cv.imencode('.jpg', small, [cv.IMWRITE_JPEG_QUALITY, 50])
                     self.ws.send_binary(buffer.tobytes())
             except queue.Empty:
                 pass
             except Exception:
+                # C5 FIX: Close the old socket before dropping the reference
+                if self.ws:
+                    try:
+                        self.ws.close()
+                    except Exception:
+                        pass
                 self.ws = None
 
     def send_frame(self, frame):
@@ -76,18 +87,27 @@ label_annotator = sv.LabelAnnotator()
 attendance_detector = AttendanceDetector(line_y=0)
 
 _emp_dict_cache = {}
-_emp_dict_ts = 0.0
+_emp_dict_lock = threading.Lock()
 
-def _get_emp_dict():
-    global _emp_dict_cache, _emp_dict_ts
-    now = time.time()
-    if now - _emp_dict_ts > 30.0:
+def _bg_emp_dict_refresh():
+    """Background thread that refreshes the employee dict every 30 seconds.
+    Never blocks the camera loop, even if MongoDB is unreachable."""
+    global _emp_dict_cache
+    while True:
         try:
-            _emp_dict_cache = get_employee_dict()
-            _emp_dict_ts = now
+            fresh = get_employee_dict()
+            with _emp_dict_lock:
+                _emp_dict_cache = fresh
         except Exception:
             pass
-    return _emp_dict_cache
+        time.sleep(30.0)
+
+_emp_thread = threading.Thread(target=_bg_emp_dict_refresh, daemon=True)
+_emp_thread.start()
+
+def _get_emp_dict():
+    with _emp_dict_lock:
+        return _emp_dict_cache
 
 _last_confidence = {}
 
@@ -95,6 +115,10 @@ _last_confidence = {}
 _frame_counter = 0
 _last_detections = None
 _last_labels = []
+
+# P1 FIX: Cache recognition results per track ID to skip FaceNet
+_face_cache = {}        # tracker_id -> (emp_id, confidence, monotonic_time)
+RECONFIRM_SEC = 10.0    # Re-run FaceNet after this many seconds
 
 def callback(frame: np.ndarray, _: int) -> np.ndarray:
     global _frame_counter, _last_detections, _last_labels
@@ -130,25 +154,39 @@ def callback(frame: np.ndarray, _: int) -> np.ndarray:
         emp_ids, face_cys, tid_list, final_confs = [], [], [], []
         
         if detections.tracker_id is not None:
+            now_mono = time.monotonic()
+            active_tids = set()
             for i, det in enumerate(detections.xyxy):
+                tid = int(detections.tracker_id[i])
+                active_tids.add(tid)
                 x1, y1, x2, y2 = map(int, det[:4])
                 face = frame[y1:y2, x1:x2]
                 
-                if face.size == 0:
-                    emp_ids.append("unknown")
-                    final_confs.append(0.0)
+                # P1 FIX: Check cache before running expensive FaceNet
+                cached = _face_cache.get(tid)
+                if cached and (now_mono - cached[2]) < RECONFIRM_SEC:
+                    eid, conf = cached[0], cached[1]
+                elif face.size == 0:
+                    eid, conf = "unknown", 0.0
                 else:
                     try:
                         eid, conf = predict_face(face)
-                        emp_ids.append(eid)
-                        final_confs.append(conf)
-                        _last_confidence[eid] = conf
+                        _face_cache[tid] = (eid, conf, now_mono)
                     except Exception:
-                        emp_ids.append("unknown")
-                        final_confs.append(0.0)
+                        eid, conf = "unknown", 0.0
+                
+                emp_ids.append(eid)
+                final_confs.append(conf)
+                if eid != "unknown":
+                    _last_confidence[eid] = conf
                 
                 face_cys.append((y1 + y2) // 2)
-                tid_list.append(int(detections.tracker_id[i]))
+                tid_list.append(tid)
+            
+            # Prune stale entries from cache (tracks that disappeared)
+            for stale_tid in list(_face_cache.keys()):
+                if stale_tid not in active_tids:
+                    del _face_cache[stale_tid]
         
         # Check attendance
         if tid_list:

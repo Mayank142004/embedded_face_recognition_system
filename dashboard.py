@@ -17,6 +17,7 @@ from db import (
     get_all_employees,
     get_today_attendance,
     get_today_attendance_count,
+    get_today_local_attendance,
     register_employee,
 )
 from gcs_storage import upload_employee_photo, upload_embedding
@@ -89,6 +90,20 @@ def import_main_callback():
         import main as m
         st.session_state["main_module"] = m
     return st.session_state["main_module"].callback
+
+
+def import_local_callback():
+    """Load main_local.py models and return callback_local. Isolated from Pi mode."""
+    if "local_module" not in st.session_state:
+        import main_local as ml
+        ml.load_local_models()
+        st.session_state["local_module"] = ml
+    else:
+        # Ensure models are loaded even if module was already imported
+        st.session_state["local_module"].load_local_models()
+    # Reset per-session state so IDs don't carry over from previous runs
+    st.session_state["local_module"].reset_local_state()
+    return st.session_state["local_module"].callback_local
 
 
 emps = get_all_employees()
@@ -341,23 +356,25 @@ elif page == "🔴 Live Analysis":
         is_running, is_recording = st.session_state["running"], st.session_state["recording"]
 
         if source == "Local USB — Live View":
-            start_btn = st.button("▶ Start Analysis", disabled=is_running)
+            start_btn = st.button("▶ Start Analysis (Pi Model)", disabled=is_running)
+            local_start_btn = st.button("▶ Start Local Analysis", disabled=is_running,
+                                        help="Runs inference locally on this laptop. Isolated from Pi mode.")
             stop_btn = st.button("⏹ Stop Analysis", disabled=not is_running)
             record_start_btn = record_stop_btn = analyze_recorded_btn = False
             server_stream_btn = False
         elif source == "Local USB — Record & Analyze":
             record_start_btn = st.button("⏺ Start Recording", disabled=is_recording)
             record_stop_btn = st.button("⏹ Stop Recording", disabled=not is_recording)
-            start_btn = stop_btn = server_stream_btn = False
+            start_btn = stop_btn = server_stream_btn = local_start_btn = False
             analyze_recorded_btn = st.button("🔍 Analyze Last Recording", disabled=is_running) if st.session_state.get("recorded_video_path") and not is_recording else False
         elif source == "Server Stream (Pi)":
             server_stream_btn = st.button("📡 Connect to Server", disabled=is_running)
             stop_btn = st.button("⏹ Disconnect", disabled=not is_running)
-            start_btn = record_start_btn = record_stop_btn = analyze_recorded_btn = False
+            start_btn = record_start_btn = record_stop_btn = analyze_recorded_btn = local_start_btn = False
         else:
             start_btn = st.button("▶ Analyze Video", disabled=is_running)
             stop_btn = st.button("⏹ Stop", disabled=not is_running)
-            record_start_btn = record_stop_btn = analyze_recorded_btn = server_stream_btn = False
+            record_start_btn = record_stop_btn = analyze_recorded_btn = server_stream_btn = local_start_btn = False
 
         st.markdown("---")
         frames_metric = st.empty()
@@ -372,8 +389,20 @@ elif page == "🔴 Live Analysis":
             st.markdown("**Output (Analyzed)**")
             analyzed_frame_placeholder = st.empty()
             
-        st.markdown("##### 📋 Recognition Events (from MongoDB)")
+        st.markdown("##### 📋 Pi Camera Attendance (from MongoDB)")
         events_placeholder = st.empty()
+
+        st.markdown("---")
+        st.markdown("##### 💻 Local Camera Attendance (from MongoDB)")
+        local_events_placeholder = st.empty()
+        # Populate local attendance table on page load
+        local_att_logs = get_today_local_attendance()
+        if local_att_logs:
+            df_local = pd.DataFrame(local_att_logs)[["emp_id", "emp_name", "timestamp", "status"]]
+            local_events_placeholder.dataframe(df_local.tail(10), use_container_width=True)
+        else:
+            local_events_placeholder.info("No local camera attendance recorded today.")
+
         playback_area = st.empty()
 
     if stop_btn or record_stop_btn:
@@ -443,10 +472,62 @@ elif page == "🔴 Live Analysis":
 
         return idx
 
-    if start_btn or record_start_btn or analyze_recorded_btn or server_stream_btn:
+    if start_btn or record_start_btn or analyze_recorded_btn or server_stream_btn or local_start_btn:
         st.session_state["stop_flag"] = False
-        st.session_state["running"] = start_btn or analyze_recorded_btn or server_stream_btn
+        st.session_state["running"] = start_btn or analyze_recorded_btn or server_stream_btn or local_start_btn
         st.session_state["recording"] = record_start_btn
+
+        # ── LOCAL ANALYSIS (laptop camera, isolated from Pi) ──
+        if local_start_btn:
+            import main_local as ml
+            cam_idx = ml.detect_camera()
+            cap = cv2.VideoCapture(cam_idx)
+            if not cap.isOpened():
+                st.error(f"❌ Cannot open camera at index {cam_idx}.")
+                st.session_state.update(running=False)
+                st.stop()
+
+            st.info(f"💻 Local Analysis running on camera index {cam_idx}")
+            with st.spinner("Loading local models…"):
+                callback_fn = import_local_callback()
+
+            idx = 0
+            last_ui_update = 0.0
+            while not st.session_state["stop_flag"]:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                try:
+                    annotated = callback_fn(frame, idx)
+                except Exception as e:
+                    annotated = frame.copy()
+                    cv2.putText(annotated, f"Err: {e}", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+                now = time.time()
+                if idx % 2 == 0 and (now - last_ui_update) >= (1 / 12.0):
+                    pr_r = cv2.resize(frame, (480, int(480 * frame.shape[0] / frame.shape[1])))
+                    pr_a = cv2.resize(annotated, (480, int(480 * annotated.shape[0] / annotated.shape[1])))
+                    raw_frame_placeholder.image(cv2.cvtColor(pr_r, cv2.COLOR_BGR2RGB),
+                                                channels="RGB", use_container_width=True)
+                    analyzed_frame_placeholder.image(cv2.cvtColor(pr_a, cv2.COLOR_BGR2RGB),
+                                                     channels="RGB", use_container_width=True)
+                    last_ui_update = now
+
+                idx += 1
+                frames_metric.metric("🖼️ Frames Processed", idx)
+
+                # Refresh local attendance table every 30 frames
+                if idx % 30 == 0:
+                    local_logs = get_today_local_attendance()
+                    if local_logs:
+                        df_local = pd.DataFrame(local_logs)[["emp_id", "emp_name", "timestamp", "status"]]
+                        local_events_placeholder.dataframe(df_local.tail(10), use_container_width=True)
+
+            cap.release()
+            st.session_state.update(running=False)
+            st.success(f"✅ Local Analysis stopped. {idx} frames processed.")
+            st.rerun()
 
         if server_stream_btn:
             import websockets
@@ -468,6 +549,12 @@ elif page == "🔴 Live Analysis":
                         while not st.session_state["stop_flag"]:
                             try:
                                 data = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                                # L1 FIX: Drain all stale frames, keep only the newest
+                                while True:
+                                    try:
+                                        data = await asyncio.wait_for(ws.recv(), timeout=0.005)
+                                    except asyncio.TimeoutError:
+                                        break
                                 nparr = np.frombuffer(data, np.uint8)
                                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

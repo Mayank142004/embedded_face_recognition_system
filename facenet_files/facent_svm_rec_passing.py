@@ -25,7 +25,8 @@ input_details = None
 output_details = None
 
 if os.path.exists(TFLITE_MODEL_PATH):
-    interpreter = tflite.Interpreter(model_path=TFLITE_MODEL_PATH)
+    # P2 FIX: Use all 4 CPU cores for ~3x speedup on Pi 3/4
+    interpreter = tflite.Interpreter(model_path=TFLITE_MODEL_PATH, num_threads=4)
     interpreter.allocate_tensors()
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
