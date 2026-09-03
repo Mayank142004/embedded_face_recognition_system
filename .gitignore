@@ -40,3 +40,5 @@ test_datas/
 
 
 uvicorn.log 
+# Model sync metadata (written at runtime)
+facenet_models/config.json

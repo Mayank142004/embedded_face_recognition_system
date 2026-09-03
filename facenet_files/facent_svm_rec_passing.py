@@ -15,7 +15,12 @@ except ImportError:
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-from config import MODEL_PATH, DEFAULT_CONFIDENCE_THRESHOLD, PROJECT_ROOT
+from config import (
+    MODEL_PATH,
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    PROJECT_ROOT,
+    TFLITE_NUM_THREADS,
+)
 
 # ── FaceNet TFLite Embedder (loaded once) ───────────────────
 TFLITE_MODEL_PATH = os.path.join(PROJECT_ROOT, "facenet_models", "facenet.tflite")
@@ -25,8 +30,9 @@ input_details = None
 output_details = None
 
 if os.path.exists(TFLITE_MODEL_PATH):
-    # P2 FIX: Use all 4 CPU cores for ~3x speedup on Pi 3/4
-    interpreter = tflite.Interpreter(model_path=TFLITE_MODEL_PATH, num_threads=4)
+    # One thread fewer than the core count. YOLO and FaceNet never run
+    # concurrently, so each gets 3 while capture/encode/network keep one core.
+    interpreter = tflite.Interpreter(model_path=TFLITE_MODEL_PATH, num_threads=TFLITE_NUM_THREADS)
     interpreter.allocate_tensors()
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()

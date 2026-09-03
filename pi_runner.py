@@ -16,8 +16,11 @@ import time
 import sys
 import os
 import json
+import subprocess
 
 import cv2 as cv
+
+from config import PI_TARGET_FPS, AI_INTERVAL_SEC, TFLITE_NUM_THREADS, MOTION_GATE_ENABLED
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,17 +29,53 @@ logging.basicConfig(
 logger = logging.getLogger("pi_runner")
 
 
+def _log_health():
+    """Log SoC temperature and throttle status.
+
+    Undervoltage is common on a Pi 3 with a USB camera sharing the supply,
+    and it halves the clock silently — worth seeing in the log before
+    drawing any conclusions from the perf numbers.
+    """
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            logger.info("SoC temperature: %.1f C", int(f.read().strip()) / 1000.0)
+    except Exception:
+        pass
+
+    try:
+        out = subprocess.run(["vcgencmd", "get_throttled"],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        # Bit 0 = under-voltage now, bit 16 = under-voltage has occurred
+        raw = out.split("=")[-1] if "=" in out else "0x0"
+        bits = int(raw, 16)
+        notes = []
+        if bits & 0x1:      notes.append("UNDER-VOLTAGE NOW")
+        if bits & 0x4:      notes.append("ARM FREQUENCY CAPPED NOW")
+        if bits & 0x8:      notes.append("THROTTLED NOW")
+        if bits & 0x10000:  notes.append("under-voltage has occurred")
+        if bits & 0x40000:  notes.append("frequency capping has occurred")
+        if bits & 0x80000:  notes.append("throttling has occurred")
+        logger.info("Throttle status: %s %s", out or "n/a",
+                    ("<-- " + "; ".join(notes)) if notes else "(clean)")
+    except FileNotFoundError:
+        logger.info("Throttle status: vcgencmd not available")
+    except Exception as e:
+        logger.info("Throttle status: unavailable (%s)", e)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Face Attendance — Pi Runner")
     parser.add_argument("--camera", type=int, default=0, help="Camera index (default 0)")
     parser.add_argument("--show", action="store_true", help="Show local OpenCV preview window")
-    parser.add_argument("--fps", type=int, default=30, help="Target processing FPS (default 15)")
+    parser.add_argument("--fps", type=int, default=PI_TARGET_FPS,
+                        help=f"Target capture/stream FPS (default {PI_TARGET_FPS}, from PI_TARGET_FPS)")
     args = parser.parse_args()
 
     # ── Print startup banner ───────────────────────────────
     logger.info("=" * 60)
     logger.info("Face Attendance System — Raspberry Pi Edge Node")
     logger.info("=" * 60)
+    _log_health()
 
     # ── Print model version ────────────────────────────────
     from config import MODEL_DIR, MODEL_PATH
@@ -90,7 +129,10 @@ def main():
     w = int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))
     logger.info("Camera opened: %dx%d", w, h)
-    logger.info("Target FPS: %d", args.fps)
+    logger.info("Target capture FPS: %d", args.fps)
+    logger.info("AI interval: %.2fs (%.1f passes/sec max)", AI_INTERVAL_SEC, 1.0 / AI_INTERVAL_SEC)
+    logger.info("TFLite threads per interpreter: %d", TFLITE_NUM_THREADS)
+    logger.info("Motion gate: %s", "ON" if MOTION_GATE_ENABLED else "OFF")
     logger.info("Local preview: %s", "ON" if args.show else "OFF")
     logger.info("-" * 60)
     logger.info("System running. Press Ctrl+C to stop.")
@@ -106,9 +148,15 @@ def main():
         while True:
             loop_start = time.time()
 
-            ret, frame = cap.read()
+            # grab() pulls the frame off the device without JPEG-decoding it;
+            # only the frame we actually keep pays for retrieve().
+            if not cap.grab():
+                logger.warning("Failed to grab frame. Retrying...")
+                time.sleep(0.5)
+                continue
+            ret, frame = cap.retrieve()
             if not ret:
-                logger.warning("Failed to read frame. Retrying...")
+                logger.warning("Failed to decode frame. Retrying...")
                 time.sleep(0.5)
                 continue
 

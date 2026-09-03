@@ -118,6 +118,18 @@ def get_employee_dict() -> dict:
     return {e["emp_id"]: e["emp_name"] for e in employees}
 
 
+def get_employee_name_map() -> dict:
+    """
+    Return {emp_id: emp_name} fetching only those two fields.
+
+    get_employee_dict() goes through get_all_employees(), which pulls every
+    field including the 512-float face_embedding for each employee, then
+    discards all of it. On the Pi that ran over WiFi every 30 seconds.
+    """
+    cur = get_employees_col().find({}, {"_id": 0, "emp_id": 1, "emp_name": 1})
+    return {e["emp_id"]: e.get("emp_name", e["emp_id"]) for e in cur}
+
+
 def update_employee_embedding(emp_id: str, embedding: list):
     """Replace the stored face embedding for an employee."""
     get_employees_col().update_one(
